@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signature Pad — record a signature, stamp it anywhere</title>
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --paper: #fffef8; --line: #d8d2c0; --accent: #b3541e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); background: #f6f4ee; line-height: 1.5; }
+  header, main { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+  header { padding-top: 40px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  header p { margin: 0 0 24px; color: #555; }
+  h2 { font-size: 18px; margin: 28px 0 10px; }
+  .pad-wrap { position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.06); overflow: hidden; }
+  #pad { display: block; width: 100%; height: 280px; touch-action: none; cursor: crosshair; }
+  .baseline { position: absolute; left: 24px; right: 24px; bottom: 64px; border-bottom: 1px solid #999; pointer-events: none; }
+  .baseline span { position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); font-size: 13px; color: #999; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; border-top: 1px solid var(--line); background: #fff; }
+  .controls .group { display: flex; gap: 6px; align-items: center; }
+  .controls .spacer { flex: 1; }
+  button { font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #999; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button.danger { color: var(--accent); border-color: #e0b49c; }
+  button[aria-pressed="true"] { background: #eee; border-color: #999; font-weight: 600; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 12px; }
+  #preview { display: block; max-width: 320px; max-height: 120px; }
+  .meta { color: #555; font-size: 14px; margin: 10px 0; }
+  .meta b { color: var(--ink); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  #versionList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  #versionList li { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+  #versionList img { max-width: 140px; max-height: 52px; }
+  #versionList .when { font-size: 13px; color: #555; flex: 1; }
+  #versionList .current-tag { font-size: 12px; color: var(--accent); font-weight: 600; }
+  .ai-note { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 28px 0 48px; }
+  .ai-note code { background: #f0ede4; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+  footer { max-width: 720px; margin: 0 auto; padding: 0 20px 40px; color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Signature Pad</h1>
+  <p>A tiny open-source tool that only records a signature. No account, no server, no date stored. When an AI stamps your signature into a document, it fills in the date from the current date.</p>
+</header>
+
+<main>
+  <div class="pad-wrap">
+    <canvas id="pad"></canvas>
+    <div class="baseline"><span>Sign here</span></div>
+    <div class="controls">
+      <div class="group" role="group" aria-label="Pen thickness">
+        <button type="button" data-width="2">Fine</button>
+        <button type="button" data-width="3.5" aria-pressed="true">Medium</button>
+        <button type="button" data-width="5.5">Bold</button>
+      </div>
+      <div class="spacer"></div>
+      <button type="button" id="undoBtn" disabled>Undo</button>
+      <button type="button" id="clearBtn" disabled>Clear</button>
+      <button type="button" id="saveBtn" class="primary" disabled>Save signature</button>
+    </div>
+  </div>
+
+  <section id="onfile" class="card" hidden>
+    <h2 style="margin-top:0">On file</h2>
+    <img id="preview" alt="Saved signature">
+    <p class="meta">Saved <span id="savedAt"></span></p>
+    <p class="meta">Date to use when stamping: <b id="todayDate"></b> — computed today, never stored.</p>
+    <div class="actions">
+      <button type="button" id="downloadBtn" class="primary">Download PNG</button>
+      <button type="button" id="deleteBtn" class="danger">Delete</button>
+    </div>
+  </section>
+
+  <section id="versionsWrap" hidden>
+    <h2>Earlier versions</h2>
+    <ul id="versionList"></ul>
+  </section>
+
+  <section class="ai-note">
+    <h2>For AI assistants</h2>
+    <p>This pad records <b>only the signature</b>. It never stores a date.</p>
+    <p>To use a saved signature: get the transparent PNG (the <b>Download PNG</b> button, or the <code>signature-pad:current</code> entry in <code>localStorage</code>), place it on the document&rsquo;s signature line with its lowest ink touching the line, and fill in the signing date from <b>today&rsquo;s date</b> in the signer&rsquo;s timezone.</p>
+    <p>Nothing here is sent anywhere. Everything is stored locally in the browser.</p>
+  </section>
+</main>
+
+<footer>Signature Pad &middot; MIT License &middot; No tracking, no server, no account.</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var canvas = document.getElementById("pad");
+  var ctx = canvas.getContext("2d");
+  var undoBtn = document.getElementById("undoBtn");
+  var clearBtn = document.getElementById("clearBtn");
+  var saveBtn = document.getElementById("saveBtn");
+  var onfile = document.getElementById("onfile");
+  var preview = document.getElementById("preview");
+  var savedAtEl = document.getElementById("savedAt");
+  var todayDateEl = document.getElementById("todayDate");
+  var downloadBtn = document.getElementById("downloadBtn");
+  var deleteBtn = document.getElementById("deleteBtn");
+  var versionsWrap = document.getElementById("versionsWrap");
+  var versionList = document.getElementById("versionList");
+
+  var CURRENT_KEY = "signature-pad:current";
+  var VERSIONS_KEY = "signature-pad:versions";
+  var MAX_VERSIONS = 5;
+
+  var strokes = [];          // finished strokes: { width, points: [[x, y], ...] }
+  var currentStroke = null;  // stroke in progress
+  var penWidth = 3.5;
+  var dpr = Math.max(1, window.devicePixelRatio || 1);
+  var deleteArmed = false;
+
+  function fitCanvas() {
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#1a1a1a";
+    redraw();
+  }
+
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+    strokes.concat(currentStroke ? [currentStroke] : []).forEach(drawStroke);
+    updateButtons();
+  }
+
+  function drawStroke(stroke) {
+    if (stroke.points.length === 0) return;
+    ctx.beginPath();
+    ctx.lineWidth = stroke.width;
+    var pts = stroke.points;
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    if (pts.length === 1) { ctx.lineTo(pts[0][0] + 0.01, pts[0][1] + 0.01); }
+    for (var i = 1; i < pts.length; i++) {
+      var midX = (pts[i - 1][0] + pts[i][0]) / 2;
+      var midY = (pts[i - 1][1] + pts[i][1]) / 2;
+      ctx.quadraticCurveTo(pts[i - 1][0], pts[i - 1][1], midX, midY);
+    }
+    ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    ctx.stroke();
+  }
+
+  function canvasPos(evt) {
+    var r = canvas.getBoundingClientRect();
+    return [evt.clientX - r.left, evt.clientY - r.top];
+  }
+
+  canvas.addEventListener("pointerdown", function (evt) {
+    evt.preventDefault();
+    canvas.setPointerCapture(evt.pointerId);
+    currentStroke = { width: penWidth, points: [canvasPos(evt)] };
+    redraw();
+  });
+  canvas.addEventListener("pointermove", function (evt) {
+    if (!currentStroke) return;
+    evt.preventDefault();
+    currentStroke.points.push(canvasPos(evt));
+    redraw();
+  });
+  function endStroke() {
+    if (!currentStroke) return;
+    if (currentStroke.points.length > 0) strokes.push(currentStroke);
+    currentStroke = null;
+    redraw();
+  }
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+
+  function updateButtons() {
+    var hasInk = strokes.length > 0 || currentStroke !== null;
+    undoBtn.disabled = strokes.length === 0;
+    clearBtn.disabled = !hasInk;
+    saveBtn.disabled = strokes.length === 0;
+  }
+
+  undoBtn.addEventListener("click", function () {
+    strokes.pop();
+    redraw();
+  });
+  clearBtn.addEventListener("click", function () {
+    strokes = [];
+    currentStroke = null;
+    redraw();
+  });
+
+  document.querySelectorAll("[data-width]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      penWidth = parseFloat(btn.getAttribute("data-width"));
+      document.querySelectorAll("[data-width]").forEach(function (b) {
+        b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+      });
+    });
+  });
+
+  function inkBBox() {
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    strokes.forEach(function (s) {
+      var pad = s.width / 2 + 2;
+      s.points.forEach(function (p) {
+        minX = Math.min(minX, p[0] - pad); maxX = Math.max(maxX, p[0] + pad);
+        minY = Math.min(minY, p[1] - pad); maxY = Math.max(maxY, p[1] + pad);
+      });
+    });
+    if (!isFinite(minX)) return null;
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  // Render the signature to a cropped transparent PNG data URL.
+  function exportPNG() {
+    var box = inkBBox();
+    if (!box) return null;
+    var PADDING = 24, SCALE = 2;
+    var off = document.createElement("canvas");
+    off.width = Math.ceil((box.w + PADDING * 2) * SCALE);
+    off.height = Math.ceil((box.h + PADDING * 2) * SCALE);
+    var octx = off.getContext("2d");
+    octx.scale(SCALE, SCALE);
+    octx.translate(-box.x + PADDING, -box.y + PADDING);
+    octx.lineCap = "round";
+    octx.lineJoin = "round";
+    octx.strokeStyle = "#1a1a1a";
+    strokes.forEach(function (s) {
+      octx.beginPath();
+      octx.lineWidth = s.width;
+      var pts = s.points;
+      octx.moveTo(pts[0][0], pts[0][1]);
+      for (var i = 1; i < pts.length; i++) {
+        var midX = (pts[i - 1][0] + pts[i][0]) / 2;
+        var midY = (pts[i - 1][1] + pts[i][1]) / 2;
+        octx.quadraticCurveTo(pts[i - 1][0], pts[i - 1][1], midX, midY);
+      }
+      octx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+      octx.stroke();
+    });
+    return off.toDataURL("image/png");
+  }
+
+  function loadJSON(key) {
+    try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { return null; }
+  }
+  function saveJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage full/blocked: keep in-memory only */ }
+  }
+
+  function fmtTime(iso) {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  }
+  function todayString() {
+    var now = new Date();
+    var long = now.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+    var mmddyyyy = String(now.getMonth() + 1).padStart(2, "0") + "/" + String(now.getDate()).padStart(2, "0") + "/" + now.getFullYear();
+    return long + " (" + mmddyyyy + ")";
+  }
+
+  function renderSaved() {
+    var current = loadJSON(CURRENT_KEY);
+    var versions = loadJSON(VERSIONS_KEY) || [];
+    if (current) {
+      onfile.hidden = false;
+      preview.src = current.png;
+      savedAtEl.textContent = fmtTime(current.savedAt);
+      todayDateEl.textContent = todayString();
+    } else {
+      onfile.hidden = true;
+    }
+    versionList.innerHTML = "";
+    versionsWrap.hidden = versions.length === 0;
+    versions.forEach(function (v) {
+      var li = document.createElement("li");
+      var img = document.createElement("img");
+      img.src = v.png; img.alt = "Earlier signature";
+      var when = document.createElement("span");
+      when.className = "when";
+      when.textContent = fmtTime(v.savedAt);
+      var makeBtn = document.createElement("button");
+      makeBtn.type = "button";
+      makeBtn.textContent = "Make current";
+      makeBtn.addEventListener("click", function () {
+        var cur = loadJSON(CURRENT_KEY);
+        var vers = loadJSON(VERSIONS_KEY) || [];
+        var idx = vers.indexOf(v);
+        if (idx !== -1) vers.splice(idx, 1);
+        if (cur) vers.unshift(cur);
+        saveJSON(VERSIONS_KEY, vers.slice(0, MAX_VERSIONS));
+        saveJSON(CURRENT_KEY, v);
+        renderSaved();
+      });
+      var delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "danger";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", function () {
+        var vers = loadJSON(VERSIONS_KEY) || [];
+        var idx = vers.indexOf(v);
+        if (idx !== -1) vers.splice(idx, 1);
+        saveJSON(VERSIONS_KEY, vers);
+        renderSaved();
+      });
+      li.appendChild(img);
+      li.appendChild(when);
+      li.appendChild(makeBtn);
+      li.appendChild(delBtn);
+      versionList.appendChild(li);
+    });
+  }
+
+  saveBtn.addEventListener("click", function () {
+    var png = exportPNG();
+    if (!png) return;
+    var entry = { png: png, savedAt: new Date().toISOString() };
+    var current = loadJSON(CURRENT_KEY);
+    if (current) {
+      var versions = loadJSON(VERSIONS_KEY) || [];
+      versions.unshift(current);
+      saveJSON(VERSIONS_KEY, versions.slice(0, MAX_VERSIONS));
+    }
+    saveJSON(CURRENT_KEY, entry);
+    strokes = [];
+    currentStroke = null;
+    redraw();
+    renderSaved();
+  });
+
+  downloadBtn.addEventListener("click", function () {
+    var current = loadJSON(CURRENT_KEY);
+    if (!current) return;
+    var a = document.createElement("a");
+    a.href = current.png;
+    a.download = "signature.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  deleteBtn.addEventListener("click", function () {
+    if (!deleteArmed) {
+      deleteArmed = true;
+      deleteBtn.textContent = "Tap again to delete";
+      setTimeout(function () { deleteArmed = false; deleteBtn.textContent = "Delete"; }, 3000);
+      return;
+    }
+    deleteArmed = false;
+    deleteBtn.textContent = "Delete";
+    var versions = loadJSON(VERSIONS_KEY) || [];
+    var next = versions.shift() || null;
+    saveJSON(VERSIONS_KEY, versions);
+    if (next) saveJSON(CURRENT_KEY, next);
+    else { try { localStorage.removeItem(CURRENT_KEY); } catch (e) {} }
+    renderSaved();
+  });
+
+  window.addEventListener("resize", fitCanvas);
+  fitCanvas();
+  renderSaved();
+})();
+</script>
+</body>
+</html>
